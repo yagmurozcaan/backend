@@ -10,7 +10,7 @@ from tensorflow.keras.preprocessing import image
 app = Flask(__name__)
 UPLOAD_FOLDER = "backend/uploads"
 REPORT_FILE = "backend/reports/reports.csv"
-MODEL_PATH = "Train/models/light_cnn_model2.h5"  # Keras formatına çevrilmiş model
+MODEL_PATH = "Train/models/light_cnn_model.h5"  # Keras formatına çevrilmiş model
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 

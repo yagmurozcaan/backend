@@ -1,4 +1,9 @@
-# utils.py
+"""
+Utility Functions for NEUROLOOK Project
+Contains video processing, landmark extraction, and prediction functions.
+Handles MediaPipe landmark detection, EfficientNet feature extraction, and LSTM model predictions.
+"""
+
 import cv2
 import numpy as np
 from tensorflow.keras.preprocessing import image
@@ -67,7 +72,6 @@ def extract_landmark_features(video_path, max_frames=32):
     blink = 1 if blink_count > 0 else 0
 
     return np.array([armflapping, headbanging, spinning, blink], dtype=float)
-
 
 def extract_features_segments(video_path, base_model, segment_length_sec=2, fps=30, max_frames_per_segment=32):
     cap = cv2.VideoCapture(video_path)

@@ -1,3 +1,9 @@
+"""
+Database Initialization Module for NEUROLOOK Project
+Creates SQLite database with reports table for storing autism detection results.
+Handles database schema setup and directory creation for data persistence.
+"""
+
 import sqlite3
 import os
 

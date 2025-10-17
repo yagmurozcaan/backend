@@ -1,3 +1,8 @@
+"""
+Flask API Server for NEUROLOOK Project
+Main backend application handling video uploads, ML predictions, and admin panel.
+Processes user videos through LSTM model and stores results in SQLite database.
+"""
 from flask import Flask, render_template, request
 import os, sqlite3, csv
 from tensorflow.keras.models import load_model

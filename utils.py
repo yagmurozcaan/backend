@@ -1,15 +1,14 @@
-"""
-Utility Functions for NEUROLOOK Project
-Contains video processing, landmark extraction, and prediction functions.
-Handles MediaPipe landmark detection, EfficientNet feature extraction, and LSTM model predictions.
-"""
-
 import cv2
 import numpy as np
 from tensorflow.keras.preprocessing import image
 from tensorflow.keras.applications.efficientnet import preprocess_input
 import mediapipe as mp
+import os
+import sqlite3
 
+DB_FILE = "reports/reports.db"
+
+# --- Landmark feature extraction ---
 def extract_landmark_features(video_path, max_frames=32):
     mp_pose = mp.solutions.pose
     mp_hands = mp.solutions.hands
@@ -17,11 +16,14 @@ def extract_landmark_features(video_path, max_frames=32):
 
     cap = cv2.VideoCapture(video_path)
     frame_count = 0
-    hand_motion = 0
-    head_motion = 0
-    blink_count = 0
+
+    hand_motion_values = []
+    head_motion_values = []
+    direction_changes = 0
     prev_left_hand = None
-    prev_head_y = None
+    prev_direction = None
+    prev_head_angle = None
+    blink_count = 0
     prev_eye_dist = None
 
     with mp_pose.Pose(static_image_mode=False) as pose, \
@@ -32,26 +34,50 @@ def extract_landmark_features(video_path, max_frames=32):
             ret, frame = cap.read()
             if not ret:
                 break
+
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             pose_res = pose.process(frame_rgb)
             hand_res = hands.process(frame_rgb)
             face_res = face.process(frame_rgb)
 
+            # Body height normalization
+            body_height = 1.0
+            if pose_res.pose_landmarks:
+                lm = pose_res.pose_landmarks.landmark
+                shoulder = lm[mp_pose.PoseLandmark.LEFT_SHOULDER]
+                hip = lm[mp_pose.PoseLandmark.LEFT_HIP]
+                h = abs(shoulder.y - hip.y)
+                body_height = h if h > 1e-6 else 1.0
+
+            # Hand motion
             if hand_res.multi_hand_landmarks:
                 for hand_landmarks in hand_res.multi_hand_landmarks:
                     wrist = hand_landmarks.landmark[0]
                     if prev_left_hand is not None:
-                        hand_motion += abs(wrist.y - prev_left_hand)
-                    prev_left_hand = wrist.y
+                        dx = abs(wrist.x - prev_left_hand[0]) / body_height
+                        dy = abs(wrist.y - prev_left_hand[1]) / body_height
+                        motion = dx + dy
+                        hand_motion_values.append(motion)
 
-            if pose_res.pose_landmarks:
-                nose = pose_res.pose_landmarks.landmark[mp_pose.PoseLandmark.NOSE]
-                if prev_head_y is not None:
-                    head_motion += abs(nose.y - prev_head_y)
-                prev_head_y = nose.y
+                        direction = np.sign(wrist.y - prev_left_hand[1])
+                        if prev_direction is not None and direction != prev_direction:
+                            direction_changes += 1
+                        prev_direction = direction
+                    prev_left_hand = (wrist.x, wrist.y)
 
+            # Head motion
             if face_res.multi_face_landmarks:
                 mesh = face_res.multi_face_landmarks[0]
+                left_eye = mesh.landmark[33]
+                right_eye = mesh.landmark[263]
+                dx = right_eye.x - left_eye.x
+                dy = right_eye.y - left_eye.y
+                head_angle = np.degrees(np.arctan2(dy, dx))
+                if prev_head_angle is not None:
+                    head_motion_values.append(abs(head_angle - prev_head_angle))
+                prev_head_angle = head_angle
+
+                # Blink
                 left_eye_top = mesh.landmark[159]
                 left_eye_bottom = mesh.landmark[145]
                 eye_dist = abs(left_eye_top.y - left_eye_bottom.y)
@@ -63,16 +89,21 @@ def extract_landmark_features(video_path, max_frames=32):
 
     cap.release()
     frame_count = max(frame_count, 1)
-    hand_motion /= frame_count
-    head_motion /= frame_count
 
-    armflapping = 1 if hand_motion > 0.02 else 0
-    headbanging = 1 if head_motion > 0.015 else 0
-    spinning = 1 if hand_motion > 0.03 and head_motion > 0.015 else 0
+    hand_motion = np.mean(hand_motion_values) if hand_motion_values else 0
+    head_motion = np.mean(head_motion_values) if head_motion_values else 0
+
+    hand_threshold = (np.mean(hand_motion_values) + np.std(hand_motion_values)) if hand_motion_values else 0.02
+    head_threshold = (np.mean(head_motion_values) + np.std(head_motion_values)) if head_motion_values else 0.015
+
+    armflapping = 1 if hand_motion > hand_threshold or direction_changes > 3 else 0
+    headbanging = 1 if head_motion > head_threshold else 0
+    spinning = 1 if (hand_motion > hand_threshold * 1.5 and head_motion > head_threshold) else 0
     blink = 1 if blink_count > 0 else 0
 
     return np.array([armflapping, headbanging, spinning, blink], dtype=float)
 
+# --- Features extraction per segment ---
 def extract_features_segments(video_path, base_model, segment_length_sec=2, fps=30, max_frames_per_segment=32):
     cap = cv2.VideoCapture(video_path)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -115,7 +146,45 @@ def extract_features_segments(video_path, base_model, segment_length_sec=2, fps=
     cap.release()
     return features_segments, landmark_segments
 
-def predict_video_with_segments(video_path, model, base_model, segment_length_sec=2, fps=30, threshold=0.46):
+# --- DB kaydı ---
+def save_report_and_segments(video_path, final_prediction, avg_prob, segments_info, isim="isim", soyisim="soyisim"):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+
+    video_name = os.path.basename(video_path)
+
+    # Ana tabloya segmentlerden gelen landmark değerlerini kaydet
+    if segments_info:
+        last_landmarks = segments_info[-1]["landmarks"]
+        arm, head, spin, blink = last_landmarks
+    else:
+        arm = head = spin = blink = 0
+
+    # --- reports tablosuna genel rapor ---
+    c.execute("""
+        INSERT INTO reports 
+        (isim, soyisim, dosya, probability, final_prediction, armflapping, headbanging, spinning, blink)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (isim, soyisim, video_name, avg_prob, final_prediction, arm, head, spin, blink))
+    report_id = c.lastrowid
+
+    # --- segment_outliers tablosuna segmentler ---
+    for idx, seg in enumerate(segments_info):
+        arm, head, spin, blink = seg["landmarks"]
+        c.execute("""
+            INSERT INTO segment_outliers
+            (report_id, segment_index, probability, armflapping, headbanging, spinning, blink)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (report_id, idx, seg["prob"], arm, head, spin, blink))
+
+    conn.commit()
+    conn.close()
+    print(f"✅ Video ve segmentler veritabanına kaydedildi: {video_name}")
+    return report_id
+
+
+# --- Video prediction ---
+def predict_video_with_segments(video_path, model, base_model, segment_length_sec=2, fps=30, threshold=0.46, isim="isim", soyisim="soyisim"):
     features_segments, landmark_segments = extract_features_segments(video_path, base_model, segment_length_sec, fps)
     if not features_segments:
         return None, None, None, None
@@ -130,13 +199,19 @@ def predict_video_with_segments(video_path, model, base_model, segment_length_se
             "start": start_sec,
             "end": end_sec,
             "prob": pred_prob,
-            "landmarks": landmark_segments[i]  
+            "landmarks": landmark_segments[i]
         })
 
     avg_prob = np.mean(probs)
+    outlier_segments = [seg for seg in segments_info if abs(seg["prob"] - avg_prob) > 0.15]
+    filtered_probs = [seg["prob"] for seg in segments_info if seg not in outlier_segments]
+    if filtered_probs:
+        avg_prob = np.mean(filtered_probs)
+
     final_class = 1 if avg_prob >= threshold else 0
     final_prediction = "Otizm olabilir" if final_class else "Otizm değil"
 
-    outlier_segments = [seg for seg in segments_info if abs(seg["prob"] - avg_prob) > 0.15]
+    # --- Veritabanına kaydet ---
+    save_report_and_segments(video_path, final_prediction, avg_prob, segments_info, isim, soyisim)
 
     return final_prediction, avg_prob, segments_info, outlier_segments

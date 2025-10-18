@@ -1,8 +1,3 @@
-"""
-Flask API Server for NEUROLOOK Project
-Main backend application handling video uploads, ML predictions, and admin panel.
-Processes user videos through LSTM model and stores results in SQLite database.
-"""
 from flask import Flask, render_template, request
 import os, sqlite3, csv
 from tensorflow.keras.models import load_model
@@ -14,14 +9,15 @@ from utils import extract_features_segments, predict_video_with_segments
 app = Flask(__name__)
 UPLOAD_FOLDER = "uploads"
 DB_FILE = "reports/reports.db"
-#MODEL_PATH = "models/best_model_20251014_010814.keras"threshold 46-47
+#MODEL_PATH = "models/best_model_20251014_010814.keras"#threshold 46-47
 #MODEL_PATH = "best_model_20251014_194635.keras"#threshold 85
-MODEL_PATH = "best_model_20251014_200636.keras"#threshold 70
-
-
+#MODEL_PATH = "best_model_20251014_200636.keras"#threshold 70
+#MODEL_PATH = "best_model_20251015_004344.keras"#threshold 52
+#MODEL_PATH = "best_model_20251016_004120.keras"#threshold 60 --- 80 olursa daha iyi gibi ama
+MODEL_PATH = "best_model_20251018_204855.keras"#55
 SAPMA_FILE = "reports/outliers.csv"
 
-THRESHOLD = 0.85
+THRESHOLD = 0.55
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(os.path.dirname(DB_FILE), exist_ok=True)
@@ -105,10 +101,21 @@ def admin_panel():
     conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
+
+      # Ana tabloyu çek
     c.execute("SELECT * FROM reports ORDER BY created_at DESC")
     records = [dict(row) for row in c.fetchall()]
+
+    # Her rapor için segmentleri çek
+    for rec in records:
+        report_id = rec["id"]
+        c.execute("SELECT * FROM segment_outliers WHERE report_id=? ORDER BY segment_index ASC", (report_id,))
+        segments = [dict(seg) for seg in c.fetchall()]
+        rec["segments"] = segments
+
     conn.close()
     return render_template('admin.html', records=records)
+
 
 # ------------------- Giriş ekranı -------------------
 @app.route('/')

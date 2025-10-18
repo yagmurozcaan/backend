@@ -1,9 +1,3 @@
-"""
-Database Initialization Module for NEUROLOOK Project
-Creates SQLite database with reports table for storing autism detection results.
-Handles database schema setup and directory creation for data persistence.
-"""
-
 import sqlite3
 import os
 
@@ -13,6 +7,8 @@ def init_db():
     os.makedirs(os.path.dirname(DB_FILE), exist_ok=True)
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
+
+    # --- Genel rapor tablosu ---
     c.execute("""
         CREATE TABLE IF NOT EXISTS reports (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -28,6 +24,22 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+
+    # --- Segment outlier tablosu ---
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS segment_outliers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            report_id INTEGER,
+            segment_index INTEGER,
+            probability REAL,
+            armflapping INTEGER,
+            headbanging INTEGER,
+            spinning INTEGER,
+            blink INTEGER,
+            FOREIGN KEY(report_id) REFERENCES reports(id)
+        )
+    """)
+
     conn.commit()
     conn.close()
     print("✅ SQLite veritabanı oluşturuldu:", DB_FILE)

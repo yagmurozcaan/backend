@@ -77,18 +77,17 @@ def extract_landmark_features(video_path, max_frames=32):
                     head_motion_values.append(abs(head_angle - prev_head_angle))
                 prev_head_angle = head_angle
 
-                # Blink
+                # Blink detection
                 left_eye_top = mesh.landmark[159]
                 left_eye_bottom = mesh.landmark[145]
                 eye_dist = abs(left_eye_top.y - left_eye_bottom.y)
-                if prev_eye_dist is not None and eye_dist < 0.02 and prev_eye_dist >= 0.02:
+                if prev_eye_dist is not None and eye_dist < 0.02 <= prev_eye_dist:
                     blink_count += 1
                 prev_eye_dist = eye_dist
 
             frame_count += 1
 
     cap.release()
-    frame_count = max(frame_count, 1)
 
     hand_motion = np.mean(hand_motion_values) if hand_motion_values else 0
     head_motion = np.mean(head_motion_values) if head_motion_values else 0
@@ -96,10 +95,10 @@ def extract_landmark_features(video_path, max_frames=32):
     hand_threshold = (np.mean(hand_motion_values) + np.std(hand_motion_values)) if hand_motion_values else 0.02
     head_threshold = (np.mean(head_motion_values) + np.std(head_motion_values)) if head_motion_values else 0.015
 
-    armflapping = 1 if hand_motion > hand_threshold or direction_changes > 3 else 0
-    headbanging = 1 if head_motion > head_threshold else 0
-    spinning = 1 if (hand_motion > hand_threshold * 1.5 and head_motion > head_threshold) else 0
-    blink = 1 if blink_count > 0 else 0
+    armflapping = int(hand_motion > hand_threshold or direction_changes > 3)
+    headbanging = int(head_motion > head_threshold)
+    spinning = int(hand_motion > hand_threshold * 1.5 and head_motion > head_threshold)
+    blink = int(blink_count > 0)
 
     return np.array([armflapping, headbanging, spinning, blink], dtype=float)
 
@@ -160,28 +159,27 @@ def save_report_and_segments(video_path, final_prediction, avg_prob, segments_in
     else:
         arm = head = spin = blink = 0
 
-    # --- reports tablosuna genel rapor ---
+    # reports tablosuna genel rapor
     c.execute("""
         INSERT INTO reports 
         (isim, soyisim, dosya, probability, final_prediction, armflapping, headbanging, spinning, blink)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (isim, soyisim, video_name, avg_prob, final_prediction, arm, head, spin, blink))
+    """, (isim, soyisim, video_name, float(avg_prob), final_prediction, int(arm), int(head), int(spin), int(blink)))
     report_id = c.lastrowid
 
-    # --- segment_outliers tablosuna segmentler ---
+    # segment_outliers tablosuna segmentler
     for idx, seg in enumerate(segments_info):
         arm, head, spin, blink = seg["landmarks"]
         c.execute("""
             INSERT INTO segment_outliers
             (report_id, segment_index, probability, armflapping, headbanging, spinning, blink)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (report_id, idx, seg["prob"], arm, head, spin, blink))
+        """, (report_id, idx, float(seg["prob"]), int(arm), int(head), int(spin), int(blink)))
 
     conn.commit()
     conn.close()
     print(f"✅ Video ve segmentler veritabanına kaydedildi: {video_name}")
     return report_id
-
 
 # --- Video prediction ---
 def predict_video_with_segments(video_path, model, base_model, segment_length_sec=2, fps=30, threshold=0.46, isim="isim", soyisim="soyisim"):
@@ -196,22 +194,23 @@ def predict_video_with_segments(video_path, model, base_model, segment_length_se
         start_sec = i * segment_length_sec
         end_sec = start_sec + segment_length_sec
         segments_info.append({
+            "segment_index": i,
             "start": start_sec,
             "end": end_sec,
             "prob": pred_prob,
             "landmarks": landmark_segments[i]
         })
 
-    avg_prob = np.mean(probs)
+    avg_prob = float(np.mean(probs))
     outlier_segments = [seg for seg in segments_info if abs(seg["prob"] - avg_prob) > 0.15]
     filtered_probs = [seg["prob"] for seg in segments_info if seg not in outlier_segments]
     if filtered_probs:
-        avg_prob = np.mean(filtered_probs)
+        avg_prob = float(np.mean(filtered_probs))
 
-    final_class = 1 if avg_prob >= threshold else 0
+    final_class = int(avg_prob >= threshold)
     final_prediction = "Otizm olabilir" if final_class else "Otizm değil"
 
-    # --- Veritabanına kaydet ---
+    # Veritabanına kaydet
     save_report_and_segments(video_path, final_prediction, avg_prob, segments_info, isim, soyisim)
 
     return final_prediction, avg_prob, segments_info, outlier_segments

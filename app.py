@@ -14,10 +14,11 @@ DB_FILE = "reports/reports.db"
 #MODEL_PATH = "best_model_20251014_200636.keras"#threshold 70
 #MODEL_PATH = "best_model_20251015_004344.keras"#threshold 52
 #MODEL_PATH = "best_model_20251016_004120.keras"#threshold 60 --- 80 olursa daha iyi gibi ama
-MODEL_PATH = "best_model_20251018_204855.keras"#55
+#MODEL_PATH = "best_model_20251018_204855.keras"#55
+MODEL_PATH = "best_model_20251018_221714.keras" #50
 SAPMA_FILE = "reports/outliers.csv"
 
-THRESHOLD = 0.55
+THRESHOLD = 0.47
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(os.path.dirname(DB_FILE), exist_ok=True)
@@ -47,49 +48,12 @@ def upload():
     mp4_path = os.path.join(UPLOAD_FOLDER, video_file.filename.rsplit(".", 1)[0] + ".mp4")
     video_file.save(mp4_path)
 
-    # prediction
+    # Prediction ve DB kaydı utils içinden yapılacak
     final_pred, avg_prob, segments_info, outlier_segments = predict_video_with_segments(
-        mp4_path, model, base_model, threshold=THRESHOLD
+        mp4_path, model, base_model, threshold=THRESHOLD, isim=isim, soyisim=soyisim
     )
 
-    # CSV kaydet
-    with open(SAPMA_FILE, 'a', newline='', encoding='utf-8') as f:
-        fieldnames = ["isim","soyisim","dosya","segment_start","segment_end",
-                    "probability","final_prediction","Hand Motion","Head Motion","Spinning","Blink"]
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        if f.tell() == 0:
-            writer.writeheader()
-        for seg in segments_info:
-            lm = seg.get("landmarks", [0,0,0,0])
-            writer.writerow({
-                "isim": isim,
-                "soyisim": soyisim,
-                "dosya": os.path.basename(mp4_path),
-                "segment_start": seg["start"],
-                "segment_end": seg["end"],
-                "probability": seg["prob"],
-                "final_prediction": final_pred,
-                "Hand Motion": int(lm[0]),
-                "Head Motion": int(lm[1]),
-                "Spinning": int(lm[2]),
-                "Blink": int(lm[3])
-            })
-
-    # DB kaydet (son landmark)
-    final_landmarks = segments_info[-1].get("landmarks", [0,0,0,0])
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("""
-        INSERT INTO reports (isim, soyisim, dosya, probability, final_prediction, armflapping, headbanging, spinning, blink)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        isim, soyisim, os.path.basename(mp4_path), avg_prob, final_pred,
-        int(final_landmarks[0]), int(final_landmarks[1]), int(final_landmarks[2]), int(final_landmarks[3])
-    ))
-    conn.commit()
-    conn.close()
-
-    return f"✅ Tahmin: {final_pred} (olasılık: {avg_prob:.2f}), sapmalar CSV’ye kaydedildi", 200
+    return f"✅ Tahmin: {final_pred} (olasılık: {avg_prob:.2f}) kaydedildi", 200
 
 # ------------------- Admin -------------------
 @app.route('/admin_login')
@@ -102,7 +66,7 @@ def admin_panel():
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
 
-      # Ana tabloyu çek
+    # Ana tabloyu çek
     c.execute("SELECT * FROM reports ORDER BY created_at DESC")
     records = [dict(row) for row in c.fetchall()]
 
@@ -115,7 +79,6 @@ def admin_panel():
 
     conn.close()
     return render_template('admin.html', records=records)
-
 
 # ------------------- Giriş ekranı -------------------
 @app.route('/')

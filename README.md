@@ -91,6 +91,22 @@ Tablo yapısı aşağıdaki gibidir:
 | blink | INTEGER | Göz kırpma tespit edildi mi |
 | created_at | TIMESTAMP | Otomatik zaman damgası |
 
+
+#### `segment_outliers` tablosu
+
+| Alan | Tür | Açıklama |
+|------|-----|-----------|
+| id | INTEGER | Otomatik artan ID |
+| report_id | INTEGER | `reports` tablosuna yabancı anahtar bağlantısı |
+| segment_index | INTEGER | Segment numarası |
+| probability | REAL | Segment bazlı olasılık |
+| armflapping | INTEGER | El çırpma (0/1) |
+| headbanging | INTEGER | Baş hareketi (0/1) |
+| spinning | INTEGER | Dönme hareketi (0/1) |
+| blink | INTEGER | Göz kırpma (0/1) |
+
+Bu yapı, her kullanıcının genel sonuçlarının yanı sıra **zaman segmentlerine göre detaylı analizleri** de görüntülemeyi sağlar.
+
 ---
 
 ### 🔍 `utils.py`
